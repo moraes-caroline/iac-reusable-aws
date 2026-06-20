@@ -230,12 +230,11 @@ jobs:
         with:
           role-to-assume: ${{ inputs.role-to-assume }}
           aws-region: sa-east-1
- 
-      - name: 🧩 Install Git (Amazon Linux)
+
+      - name: 🧩 Install Git
         run: |
-          
-         sudo apt-get update
-         sudo apt-get install -y git
+          sudo apt-get update
+          sudo apt-get install -y git
 
       - name: 🔧 Configure git to use GitHub token
         env:
