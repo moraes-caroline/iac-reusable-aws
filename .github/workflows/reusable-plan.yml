@@ -233,7 +233,10 @@ jobs:
  
       - name: 🧩 Install Git (Amazon Linux)
         run: |
-          sudo dnf install -y git
+          
+         sudo apt-get update
+         sudo apt-get install -y git
+
       - name: 🔧 Configure git to use GitHub token
         env:
           TERRAFORM_PAT: ${{ secrets.TERRAFORM_PAT }}
