@@ -1,0 +1,251 @@
+name: '🚀 Terraform Apply'
+ 
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: '🌍 Select the environment for Deployment: "dev" "pvi" "hmg" "prd"'
+        required: true
+        type: string
+        default: 'dev'
+      terraform_directory:
+        description: '📂 Directory containing the Terraform project'
+        required: true
+        type: string
+        default: '.'
+      role-to-assume:
+        description: '🔐 Type the AWS Role to assume (ARN)'
+        required: true
+        type: string
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+ 
+env:
+  TF_VAR_role_to_assume: ${{ inputs.role-to-assume }}
+  TF_VAR_USR_RDS_AD_SQL_PASS: ${{ secrets.USR_RDS_AD_SQL_PASS}}
+  TF_VAR_REDISCLOUD_ACCESS_KEY: ${{ secrets.REDISCLOUD_ACCESS_KEY}}
+  TF_VAR_REDISCLOUD_SECRET_KEY: ${{ secrets.REDISCLOUD_SECRET_KEY}}
+ 
+jobs:
+  build-and-deploy:
+    name: 'Terraform Apply 🌟'
+    runs-on: [self-hosted, Linux, X64, aws, terraform]
+    environment: ${{ inputs.environment }}
+    env:
+      TF_DATA_DIR: /tmp/tfdata-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+ 
+    steps:
+      - name: 🔐 Validate HMG execution permission (devops OR arquitetura_tech)
+        if: inputs.environment == 'hmg'
+        env:
+          ORG: moraes-caroline
+          TEAMS: "devops arquitetura_tech"
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.REPO_SECRETS_VARIABLES_TOKEN_NEW }}
+        run: |
+          set -euo pipefail
+          echo "🔍 Validando acesso do usuário: $ACTOR"
+          echo "Times permitidos: $TEAMS"
+          authorized=false
+          for TEAM in $TEAMS; do
+            echo "➡️ Verificando time: $TEAM"
+            status=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/orgs/$ORG/teams/$TEAM/memberships/$ACTOR)
+            if [ "$status" == "200" ]; then
+              echo "✅ Usuário pertence ao time: $TEAM"
+              authorized=true
+              break
+            fi
+          done
+          if [ "$authorized" != "true" ]; then
+            echo "❌ Acesso negado! Usuário não pertence a nenhum dos times permitidos"
+            exit 1
+          fi
+          echo "✅ Acesso autorizado"
+ 
+      - name: 🔐 Validate PRD execution permission (devops OR arquitetura_tech)
+        if: inputs.environment == 'prd'
+        env:
+          ORG: moraes-caroline
+          TEAMS: "datacenter devops arquitetura_tech"
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.REPO_SECRETS_VARIABLES_TOKEN_NEW }}
+        run: |
+          set -euo pipefail
+          echo "🔍 Validando acesso do usuário: $ACTOR"
+          echo "Times permitidos: $TEAMS"
+          authorized=false
+          for TEAM in $TEAMS; do
+            echo "➡️ Verificando time: $TEAM"
+            status=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/orgs/$ORG/teams/$TEAM/memberships/$ACTOR)
+            if [ "$status" == "200" ]; then
+              echo "✅ Usuário pertence ao time: $TEAM"
+              authorized=true
+              break
+            fi
+          done
+          if [ "$authorized" != "true" ]; then
+            echo "❌ Acesso negado! Usuário não pertence a nenhum dos times permitidos"
+            exit 1
+          fi
+          echo "✅ Acesso autorizado"
+
+ 
+      - name: 🧹 Clean Checkov Results Directory
+        run: |
+          if [ -d "checkov-results" ]; then
+            sudo rm -rf checkov-results
+          fi
+        shell: bash
+ 
+      - name: 🧹 Cleanup stale Terraform temp directories
+        shell: bash
+        run: |
+          sudo find /tmp -maxdepth 1 -type d -name 'tfdata-*' -mtime +2 -exec rm -rf {} + || true
+ 
+      - name: 🧹 Fix workspace permissions and stale terraform cache
+        run: |
+          sudo chown -R "$USER":"$USER" "$GITHUB_WORKSPACE" || true
+          sudo rm -rf "$GITHUB_WORKSPACE/.terraform" || true
+        shell: bash
+      - name: 🛠️ Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+          clean: false
+ 
+      - name: 🏗️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '~> 1.14'
+          terraform_wrapper: false
+ 
+      - name: 🔑 Configure AWS Credentials
+        id: assume-role 
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ inputs.role-to-assume }}
+          aws-region: sa-east-1
+ 
+      - name: 🔑 Validate AWS Login
+        run: |
+          echo "Role: ${{ secrets[format('{0}_{1}','AWS_ROLE_PLATFORM_SESSION_NAME', inputs.environment)] }}"
+          aws sts get-caller-identity   
+ 
+      - name: 🌐 Set Backend Configuration Variables
+        id: set-env
+        run: |
+          if [ "${{ inputs.environment }}" == "dev" ]; then
+            echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-dev" >> $GITHUB_ENV
+            echo "AWS_BACKEND_REGION=sa-east-1" >> $GITHUB_ENV
+          elif [ "${{ inputs.environment }}" == "pvi" ]; then
+            echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-pvi" >> $GITHUB_ENV
+            echo "AWS_BACKEND_REGION=sa-east-1" >> $GITHUB_ENV
+          elif [ "${{ inputs.environment }}" == "hmg" ]; then
+            echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-hmg" >> $GITHUB_ENV
+            echo "AWS_BACKEND_REGION=sa-east-1" >> $GITHUB_ENV
+          elif [ "${{ inputs.environment }}" == "prd" ]; then
+            echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-prd" >> $GITHUB_ENV
+            echo "AWS_BACKEND_REGION=sa-east-1" >> $GITHUB_ENV
+          else
+            echo "❌ Invalid environment: ${{ inputs.environment }}"
+            exit 1
+          fi
+          echo "AWS_BACKEND_ENCRYPT=true" >> $GITHUB_ENV
+ 
+      - name: 🗄️ Generate backend.conf
+        id: backend
+        run: |
+          cat > backend.conf <<EOF
+          bucket         = "${AWS_BACKEND_BUCKET}"
+          key            = "${{ github.repository }}-${{ inputs.environment }}.tfstate"
+          region         = "${AWS_BACKEND_REGION}"
+          encrypt        = true
+          use_lockfile   = true
+          EOF
+          echo "✅ backend.conf generated:"
+          cat backend.conf
+        working-directory: ${{ inputs.terraform_directory }}
+ 
+      - name: Configure git to use GitHub token 🔐
+        env:
+          TERRAFORM_PAT: ${{ secrets.TERRAFORM_PAT }}
+        run: |
+          git config --global url."https://x-access-token:${TERRAFORM_PAT}@github.com/moraes-caroline".insteadOf "https://github.com/moraes-caroline"
+ 
+      - name: 🔐 Configure Git authentication for Terraform modules
+        env:
+          TERRAFORM_PAT: ${{ secrets.TERRAFORM_PAT }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          git config --global --unset-all credential.helper || true
+          git config --global credential.helper store
+          echo "https://x-access-token:${TERRAFORM_PAT}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          git config --global url."https://x-access-token:${TERRAFORM_PAT}@github.com/moraes-caroline/".insteadOf "https://github.com/moraes-caroline/"
+          echo -e "machine github.com\nlogin x-access-token\npassword $TERRAFORM_PAT" > ~/.netrc
+          chmod 600 ~/.netrc
+      - name: 🛠️ Terraform Init
+        run: |
+          terraform init -reconfigure -backend-config=backend.conf
+        working-directory: ${{ inputs.terraform_directory }}
+        env:
+          TERRAFORM_PAT: ${{ secrets.TERRAFORM_PAT }}
+          GITHUB_ACTOR: ${{ github.actor }}
+      - name: Terraform Plan 📋
+        id: tf-plan
+        run: |
+          export exitcode=0
+           terraform plan -detailed-exitcode -out tfplan -var-file="${{ inputs.terraform_directory }}/environments/${{ inputs.environment }}/${{ inputs.environment }}.tfvars" || export exitcode=$?
+          echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+          if [ $exitcode -eq 1 ]; then
+            echo ❌ Terraform Plan Failed!
+            exit 1
+          else 
+            exit 0
+          fi
+        working-directory: ${{ inputs.terraform_directory }}
+        env:
+          TF_VAR_github_token: ${{ secrets.TERRAFORM_PAT }}
+          TF_VAR_secrets_content: ${{ secrets.AWS_SECRETMANAGER_SECRETS }}
+      - name: Publish Terraform Plan 📤
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ inputs.terraform_directory }}/tfplan
+ 
+      - name: Show Artifact Path 🗂️
+        run: |
+          echo "current directory: $(pwd)"
+          echo "Contents of the directory:"
+          ls -la ${{ inputs.terraform_directory }}
+      - name: Terraform Apply ✅
+        id: tf-apply
+        run: |
+          terraform apply -auto-approve tfplan
+        working-directory: ${{ inputs.terraform_directory }}
+        env:
+          TF_VAR_github_token: ${{ secrets.TERRAFORM_PAT }}
+          TF_VAR_secrets_content: ${{ secrets.AWS_SECRETMANAGER_SECRETS }}
+      - name: Publish Terraform Apply Output 🎉
+        run: |
+          echo "Terraform Apply completed successfully. ✅"
+ 
+      - name: 🧹 Cleanup current Terraform temp directory
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${TF_DATA_DIR:-}" && "${TF_DATA_DIR}" == /tmp/tfdata-* ]]; then
+            sudo rm -rf "${TF_DATA_DIR}" || true
+            echo "✅ Removed TF_DATA_DIR: ${TF_DATA_DIR}"
+          else
+            echo "⚠️ Skipping TF_DATA_DIR cleanup because the path is empty or unexpected: ${TF_DATA_DIR:-unset}"
+          fi
