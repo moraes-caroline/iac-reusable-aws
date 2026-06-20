@@ -1,0 +1,273 @@
+name: 'Terraform Destroy'
+ 
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: '⚠️☠️ Select the environment to DESTROY'
+        required: true
+        type: string
+        default: 'dev'
+      terraform_directory:
+        description: 'Directory containing the Terraform project'
+        required: true
+        type: string
+        default: '.'
+      module:
+        description: 'Specify the module to be **REMOVED** (leave empty to destroy everything)'
+        required: false
+        type: string
+        default: ''
+      orphaned_state_module:
+        description: 'Optional module/resource address to remove from Terraform state before destroy when provider configuration is missing'
+        required: false
+        type: string
+        default: ''
+      role-to-assume:
+        description: '🔐 Type the AWS Role to assume (ARN)'
+        required: true
+        type: string        
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+ 
+env:
+  TERRAFORM_PAT: ${{ secrets.TERRAFORM_PAT }}
+  TF_VAR_role_to_assume: ${{ inputs.role-to-assume }}
+  TF_VAR_USR_RDS_AD_SQL_PASS: ${{ secrets.USR_RDS_AD_SQL_PASS}}
+  TF_VAR_REDISCLOUD_ACCESS_KEY: ${{ secrets.REDISCLOUD_ACCESS_KEY}}
+  TF_VAR_REDISCLOUD_SECRET_KEY: ${{ secrets.REDISCLOUD_SECRET_KEY}}
+ 
+jobs:
+  destroy:
+    name: 'Terraform Destroy'
+    runs-on: [self-hosted, Linux, X64, aws, terraform]
+    environment: ${{ inputs.environment }}
+ 
+    steps:
+      - name: 🔐 Validate HMG execution permission (devops OR arquitetura_tech)
+        if: inputs.environment == 'hmg'
+        env:
+          ORG: moraes-caroline
+          TEAMS: "devops arquitetura_tech"
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.UPDATE_SECRETS_MANAGER_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "🔍 Validando acesso do usuário: $ACTOR"
+          echo "Times permitidos: $TEAMS"
+          authorized=false
+          for TEAM in $TEAMS; do
+            echo "➡️ Verificando time: $TEAM"
+            status=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/orgs/$ORG/teams/$TEAM/memberships/$ACTOR)
+            if [ "$status" == "200" ]; then
+              echo "✅ Usuário pertence ao time: $TEAM"
+              authorized=true
+              break
+            fi
+          done
+          if [ "$authorized" != "true" ]; then
+            echo "❌ Acesso negado! Usuário não pertence a nenhum dos times permitidos"
+            exit 1
+          fi
+          echo "✅ Acesso autorizado"
+      - name: 🔐 Validate PRD execution permission (devops OR arquitetura_tech)
+        if: inputs.environment == 'prd'
+        env:
+          ORG: moraes-caroline
+          TEAMS: "datacenter arquitetura_tech devops"
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.UPDATE_SECRETS_MANAGER_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "🔍 Validando acesso do usuário: $ACTOR"
+          echo "Times permitidos: $TEAMS"
+          authorized=false
+          for TEAM in $TEAMS; do
+            echo "➡️ Verificando time: $TEAM"
+            status=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/orgs/$ORG/teams/$TEAM/memberships/$ACTOR)
+            if [ "$status" == "200" ]; then
+              echo "✅ Usuário pertence ao time: $TEAM"
+              authorized=true
+              break
+            fi
+          done
+          if [ "$authorized" != "true" ]; then
+            echo "❌ Acesso negado! Usuário não pertence a nenhum dos times permitidos"
+            exit 1
+          fi
+          echo "✅ Acesso autorizado"
+ 
+      - name: 🧹 Clean Checkov Results Directory
+        run: |
+          if [ -d "checkov-results" ]; then
+            sudo rm -rf checkov-results
+          fi
+        shell: bash
+      - name: 🛠️ Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+ 
+      - name: 🏗️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '~> 1.14'
+          terraform_wrapper: false
+      - name: 🔑 Configure AWS Credentials
+        id: assume-role 
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ inputs.role-to-assume }}
+          aws-region: sa-east-1
+ 
+      - name: 🔑 Validate AWS Login
+        run: |
+          echo "Role: ${{ secrets[format('{0}_{1}','AWS_ROLE_PLATFORM_SESSION_NAME', inputs.environment)] }}"
+          aws sts get-caller-identity   
+ 
+      - name: 🌐 Set Backend Configuration Variables
+        id: set-env
+        run: |
+          if [ "${{ inputs.environment }}" == "dev" ]; then
+            echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-dev" >> $GITHUB_ENV
+            echo "AWS_BACKEND_REGION=sa-east-1" >> $GITHUB_ENV
+          elif [ "${{ inputs.environment }}" == "int" ]; then
+            echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-int" >> $GITHUB_ENV
+            echo "AWS_BACKEND_REGION=sa-east-1" >> $GITHUB_ENV
+          elif [ "${{ inputs.environment }}" == "hmg" ]; then
+            echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-hmg" >> $GITHUB_ENV
+            echo "AWS_BACKEND_REGION=sa-east-1" >> $GITHUB_ENV
+          elif [ "${{ inputs.environment }}" == "prd" ]; then
+            echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-prd" >> $GITHUB_ENV
+            echo "AWS_BACKEND_REGION=sa-east-1" >> $GITHUB_ENV
+          else
+            echo "❌ Invalid environment: ${{ inputs.environment }}"
+            exit 1
+          fi
+          echo "AWS_BACKEND_ENCRYPT=true" >> $GITHUB_ENV
+ 
+      - name: 🗄️ Generate backend.conf
+        id: backend
+        run: |
+          cat > backend.conf <<EOF
+          bucket         = "${AWS_BACKEND_BUCKET}"
+          key            = "${{ github.repository }}-${{ inputs.environment }}.tfstate"
+          region         = "${AWS_BACKEND_REGION}"
+          encrypt        = true
+          use_lockfile   = true
+          EOF
+          echo "✅ backend.conf generated:"
+          cat backend.conf
+        working-directory: ${{ inputs.terraform_directory }}
+ 
+      - name: Configure git to use GitHub token 🔐
+        env:
+          TERRAFORM_PAT: ${{ secrets.TERRAFORM_PAT }}
+        run: |
+          git config --global url."https://x-access-token:${TERRAFORM_PAT}@github.com/moraes-caroline".insteadOf "https://github.com/moraes-caroline"
+ 
+      - name: 🔐 Configure Git authentication for Terraform modules
+        env:
+          TERRAFORM_PAT: ${{ secrets.TERRAFORM_PAT }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          git config --global --unset-all credential.helper || true
+          git config --global credential.helper store
+          echo "https://x-access-token:${TERRAFORM_PAT}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          git config --global url."https://x-access-token:${TERRAFORM_PAT}@github.com/moraes-caroline/".insteadOf "https://github.com/moraes-caroline/"
+          echo -e "machine github.com\nlogin x-access-token\npassword $TERRAFORM_PAT" > ~/.netrc
+          chmod 600 ~/.netrc
+      - name: 🛠️ Terraform Init
+        run: terraform init -reconfigure -backend-config=backend.conf
+        working-directory: ${{ inputs.terraform_directory }}
+        env:
+          TERRAFORM_PAT: ${{ secrets.TERRAFORM_PAT }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          AWS_BACKEND_BUCKET: ${{ needs.prepare.outputs.backend_bucket }}
+          AWS_BACKEND_REGION: ${{ needs.prepare.outputs.backend_region }}
+ 
+      - name: Normalize destroy inputs
+        id: normalize
+        run: |
+          set -euo pipefail
+ 
+          destroy_target="${{ inputs.module }}"
+          cleanup_target="${{ inputs.orphaned_state_module }}"
+ 
+          normalize_target() {
+            local value="$1"
+ 
+            if [ -z "$value" ]; then
+              echo ""
+              return
+            fi
+ 
+            if [[ "$value" != *.* ]]; then
+              echo "module.$value"
+              return
+            fi
+ 
+            echo "$value"
+          }
+ 
+          destroy_target="$(normalize_target "$destroy_target")"
+          cleanup_target="$(normalize_target "$cleanup_target")"
+ 
+          echo "destroy_target=$destroy_target" >> "$GITHUB_OUTPUT"
+          echo "cleanup_target=$cleanup_target" >> "$GITHUB_OUTPUT"
+ 
+          if [ -n "$destroy_target" ]; then
+            echo "📝 Final destroy target: $destroy_target"
+          else
+            echo "📝 Planning destroy for full stack"
+          fi
+ 
+          if [ -n "$cleanup_target" ]; then
+            echo "🧹 Orphaned state target requested: $cleanup_target"
+          fi
+ 
+      - name: Remove orphaned resources from Terraform state
+        if: steps.normalize.outputs.cleanup_target != ''
+        run: |
+          set -euo pipefail
+ 
+          cleanup_target="${{ steps.normalize.outputs.cleanup_target }}"
+          echo "🧹 Removing orphaned resources from state: $cleanup_target"
+          terraform state rm "$cleanup_target"
+        working-directory: ${{ inputs.terraform_directory }}
+ 
+      # --- PLAN DESTROY ---
+      - name: Terraform Plan (Destroy)
+        id: tf-plan
+        run: |
+          set -euo pipefail
+ 
+          target="${{ steps.normalize.outputs.destroy_target }}"
+ 
+          if [ -n "$target" ]; then
+            terraform plan -destroy \
+              -target="$target" \
+              -out=tfplan \
+              -var-file="${{ inputs.terraform_directory }}/environments/${{ inputs.environment }}/${{ inputs.environment }}.tfvars"
+          else
+            terraform plan -destroy \
+              -out=tfplan \
+              -var-file="${{ inputs.terraform_directory }}/environments/${{ inputs.environment }}/${{ inputs.environment }}.tfvars"
+          fi
+        working-directory: ${{ inputs.terraform_directory }}
+ 
+      - name: Terraform Destroy
+        id: tf-destroy
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve tfplan
+        working-directory: ${{ inputs.terraform_directory }}
