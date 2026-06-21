@@ -254,10 +254,15 @@ jobs:
           git config --global url."https://x-access-token:${TERRAFORM_PAT}@github.com/crefitech/".insteadOf "https://github.com/crefitech/"
           echo -e "machine github.com\nlogin x-access-token\npassword $TERRAFORM_PAT" > ~/.netrc
           chmod 600 ~/.netrc      
+
  
+      - name: Clean terraform cache- name: Clean |
+          rm -rf .terraform
+          rm -f .terraform.lock.h
+
       - name: 🛠️ Terraform Init
         run: |
-          terraform init -reconfigure -backend-config=backend.conf && terraform providers
+          terraform init -reconfigure -backend-config=backend.conf -force-copy && terraform providers
         working-directory: ${{ inputs.terraform_directory }}
         env:
           TERRAFORM_PAT: ${{ secrets.TERRAFORM_PAT }}
