@@ -135,7 +135,7 @@ jobs:
         id: set-env
         run: |
           if [ "${{ inputs.environment }}" == "dev" ]; then
-            backend_bucket="s3-aws-plataform-terraform-dev"
+            backend_bucket="s3-tfstate-524558748007-dev"
             backend_region="sa-east-1"
           elif [ "${{ inputs.environment }}" == "int" ]; then
             backend_bucket="s3-aws-plataform-terraform-int"
