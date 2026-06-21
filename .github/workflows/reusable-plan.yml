@@ -255,10 +255,10 @@ jobs:
           echo -e "machine github.com\nlogin x-access-token\npassword $TERRAFORM_PAT" > ~/.netrc
           chmod 600 ~/.netrc      
 
- 
-      - name: Clean terraform cache- name: Clean |
+      - name: Clean terraform cache
+        run: |
           rm -rf .terraform
-          rm -f .terraform.lock.h
+          rm -f .terraform.lock.hcl
 
       - name: 🛠️ Terraform Init
         run: |
