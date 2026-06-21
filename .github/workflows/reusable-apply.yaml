@@ -203,7 +203,7 @@ jobs:
         id: tf-plan
         run: |
           export exitcode=0
-           terraform plan -detailed-exitcode -out tfplan -var-file="${{ inputs.terraform_directory }}/environments/${{ inputs.environment }}/${{ inputs.environment }}.tfvars" || export exitcode=$?
+           terraform plan -detailed-exitcode -out tfplan -var-file="${{ inputs.terraform_directory }}/env/${{ inputs.environment }}/${{ inputs.environment }}.tfvars" || export exitcode=$?
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
           if [ $exitcode -eq 1 ]; then
             echo ❌ Terraform Plan Failed!
