@@ -20,7 +20,6 @@ on:
 permissions:
   id-token: write
   contents: read
-  packages: read
  
 env:
   TF_VAR_role_to_assume: ${{ inputs.role-to-assume }}
