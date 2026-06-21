@@ -144,7 +144,7 @@ jobs:
         id: set-env
         run: |
           if [ "${{ inputs.environment }}" == "dev" ]; then
-            echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-dev" >> $GITHUB_ENV
+            echo "AWS_BACKEND_BUCKET=s3-tfstate-524558748007-dev" >> $GITHUB_ENV
             echo "AWS_BACKEND_REGION=sa-east-1" >> $GITHUB_ENV
           elif [ "${{ inputs.environment }}" == "pvi" ]; then
             echo "AWS_BACKEND_BUCKET=s3-aws-plataform-terraform-pvi" >> $GITHUB_ENV
