@@ -30,7 +30,7 @@ env:
 jobs:
   build-and-deploy:
     name: 'Terraform Apply 🌟'
-    runs-on: [self-hosted, Linux, X64, aws, terraform]
+    runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
       TF_DATA_DIR: /tmp/tfdata-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
